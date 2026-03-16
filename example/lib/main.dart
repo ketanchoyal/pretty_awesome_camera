@@ -216,12 +216,21 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
     if (_recordedFilePath == null) return;
 
     try {
-      // Request storage permission
       PermissionStatus status;
+
       if (Platform.isIOS) {
-        status = await Permission.photosAddOnly.request();
+        // Check current status first
+        status = await Permission.photos.status;
+
+        // If not determined yet, request it
+        if (status.isDenied || status.isRestricted) {
+          status = await Permission.photos.request();
+        }
       } else {
-        status = await Permission.storage.request();
+        status = await Permission.storage.status;
+        if (status.isDenied) {
+          status = await Permission.storage.request();
+        }
       }
 
       if (status.isGranted || status.isLimited) {
@@ -245,9 +254,8 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
       } else if (status.isPermanentlyDenied) {
         setState(() {
           _errorMessage =
-              'Permission permanently denied. Please enable in Settings.';
+              'Permission permanently denied. Please enable in Settings > Privacy & Security > Photos';
         });
-        await openAppSettings();
       }
     } catch (e) {
       setState(() {

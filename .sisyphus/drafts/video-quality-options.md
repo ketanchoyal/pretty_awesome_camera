@@ -36,22 +36,81 @@ The `ResolutionPreset` enum exists in Dart, but it's **not actually applied** to
 
 ---
 
-## Open Questions (to clarify with user)
+## User Requirements (CONFIRMED)
 
-1. **Scope of video quality options?**
-   - Just resolution (use existing ResolutionPreset)?
-   - Add bitrate control?
-   - Add frame rate control?
-   - Add codec selection (H.264, H.265/HEVC)?
+1. **Scope**: Full control - Resolution + Bitrate + Frame Rate + Codec
+2. **API Timing**: Quality set at camera creation (`createCamera()`)
+3. **Bug Fix**: Include fixing the recording state events
+4. **Defaults**: bitrate and frameRate are **REQUIRED** (no defaults)
 
-2. **API Design preference?**
-   - Simple: Use existing `ResolutionPreset` enum (just implement it)
-   - Advanced: Add separate `VideoQualityConfig` class with all options
+## Final API Design
 
-3. **Should quality be set at camera creation or recording start?**
-   - Currently: passed to `createCamera()` but unused
-   - Option A: Apply at `createCamera()` (like Flutter camera package)
-   - Option B: Pass to `startRecording()` for per-recording flexibility
+```dart
+/// Video quality configuration for recording.
+class VideoQualityConfig {
+  final ResolutionPreset resolution;
+  final int bitrate;           // REQUIRED - bits per second (e.g., 5000000 = 5 Mbps)
+  final int frameRate;         // REQUIRED - e.g., 30, 60
+  final VideoCodec codec;      // h264 or hevc (defaults to h264)
+
+  const VideoQualityConfig({
+    required this.resolution,
+    required this.bitrate,
+    required this.frameRate,
+    this.codec = VideoCodec.h264,
+  });
+}
+
+enum VideoCodec {
+  h264,  // Most compatible
+  hevc,  // H.265 - better compression, less compatible
+}
+```
+
+### API Change
+```dart
+// Before
+Future<int> createCamera(CameraDescription camera, ResolutionPreset preset)
+
+// After
+Future<int> createCamera(
+  CameraDescription camera, 
+  VideoQualityConfig qualityConfig  // Required comprehensive config
+)
+```
+
+### Method Channel Payload
+```dart
+{
+  'camera': camera.toJson(),
+  'qualityConfig': {
+    'resolution': qualityConfig.resolution.name,  // 'low', 'medium', 'high', etc.
+    'bitrate': qualityConfig.bitrate,             // e.g., 5000000
+    'frameRate': qualityConfig.frameRate,         // e.g., 30
+    'codec': qualityConfig.codec.name,            // 'h264' or 'hevc'
+  }
+}
+```
+
+## Test Strategy
+
+**Framework**: flutter_test (existing)
+**Approach**: TDD - RED→GREEN→REFACTOR for each task
+**Tests to add**:
+- Unit tests for `VideoQualityConfig` class
+- Unit tests for `VideoCodec` enum
+- Updated `createCamera` tests with new payload structure
+- Integration tests for quality verification
+
+## Summary
+
+| Decision | Choice |
+|----------|--------|
+| Scope | Full (resolution + bitrate + frame rate + codec) |
+| API Timing | At camera creation |
+| Required params | bitrate, frameRate required |
+| Bug fix | Include event state emissions fix |
+| Test strategy | TDD |
 
 ---
 
