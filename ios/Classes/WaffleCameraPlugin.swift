@@ -13,6 +13,7 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
         var videoOutput: AVCaptureMovieFileOutput?
         var textureId: Int64?
         var lensPosition: AVCaptureDevice.Position = .back
+        var recordingURL: URL?
     }
     
     public static func register(with registrar: FlutterPluginRegistrar) {
@@ -32,6 +33,14 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
             initializeCamera(call: call, result: result)
         case "disposeCamera":
             disposeCamera(call: call, result: result)
+        case "startRecording":
+            startRecording(call: call, result: result)
+        case "pauseRecording":
+            pauseRecording(call: call, result: result)
+        case "resumeRecording":
+            resumeRecording(call: call, result: result)
+        case "stopRecording":
+            stopRecording(call: call, result: result)
         case "getPlatformVersion":
             result("iOS " + UIDevice.current.systemVersion)
         default:
@@ -154,6 +163,75 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
         
          result(nil)
     }
+    
+    private func startRecording(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let cameraId = args["cameraId"] as? Int,
+              var cameraInstance = cameras[cameraId],
+              let videoOutput = cameraInstance.videoOutput else {
+            result(FlutterError(code: "INVALID_CAMERA", message: "Camera not found or not initialized", details: nil))
+            return
+        }
+        
+        let tempDir = FileManager.default.temporaryDirectory
+        let recordingURL = tempDir.appendingPathComponent("recording_\(Int(Date().timeIntervalSince1970)).mov")
+        
+        videoOutput.startRecording(to: recordingURL, recordingDelegate: self)
+        cameraInstance.recordingURL = recordingURL
+        cameras[cameraId] = cameraInstance
+        result(nil)
+    }
+    
+    private func pauseRecording(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let cameraId = args["cameraId"] as? Int,
+              let cameraInstance = cameras[cameraId],
+              let videoOutput = cameraInstance.videoOutput else {
+            result(FlutterError(code: "INVALID_CAMERA", message: "Camera not found", details: nil))
+            return
+        }
+        
+        if #available(iOS 18.0, *) {
+            videoOutput.pauseRecording()
+            result(nil)
+        } else {
+            result(FlutterError(code: "UNSUPPORTED", message: "Pause requires iOS 18+", details: nil))
+        }
+    }
+    
+    private func resumeRecording(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let cameraId = args["cameraId"] as? Int,
+              let cameraInstance = cameras[cameraId],
+              let videoOutput = cameraInstance.videoOutput else {
+            result(FlutterError(code: "INVALID_CAMERA", message: "Camera not found", details: nil))
+            return
+        }
+        
+        if #available(iOS 18.0, *) {
+            videoOutput.resumeRecording()
+            result(nil)
+        } else {
+            result(FlutterError(code: "UNSUPPORTED", message: "Resume requires iOS 18+", details: nil))
+        }
+    }
+    
+    private func stopRecording(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let cameraId = args["cameraId"] as? Int,
+              let cameraInstance = cameras[cameraId],
+              let videoOutput = cameraInstance.videoOutput else {
+            result(FlutterError(code: "INVALID_CAMERA", message: "Camera not found", details: nil))
+            return
+        }
+        
+        videoOutput.stopRecording()
+        if let url = cameraInstance.recordingURL {
+            result(url.path)
+        } else {
+            result(FlutterError(code: "NO_RECORDING", message: "No active recording", details: nil))
+        }
+    }
 }
 
 class CameraPreviewTexture: NSObject, FlutterTexture {
@@ -166,5 +244,11 @@ class CameraPreviewTexture: NSObject, FlutterTexture {
     
     func copyPixelBuffer() -> Unmanaged<CVPixelBuffer>? {
         return nil
+    }
+}
+
+extension WaffleCameraPlugin: AVCaptureFileOutputRecordingDelegate {
+    public func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
+        // Handle recording completion if needed
     }
 }
