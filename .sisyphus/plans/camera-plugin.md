@@ -957,7 +957,7 @@ Max Concurrent: 6 (Wave 2)
   - Message: `feat(widget): add CameraPreview texture widget`
   - Files: `lib/camera_preview.dart, lib/waffle_camera_plugin.dart`
 
-- [ ] 13. Example App - Full demo UI
+- [x] 13. Example App - Full demo UI
 
   **What to do**:
   - Update `example/lib/main.dart` with complete demo:
