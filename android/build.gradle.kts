@@ -50,7 +50,7 @@ android {
     }
 
     defaultConfig {
-        minSdk = 24
+        minSdk = 21
     }
 
     testOptions {
@@ -71,6 +71,13 @@ android {
 }
 
 dependencies {
+    // CameraX dependencies
+    implementation("androidx.camera:camera-core:1.3.4")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-video:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
+
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.0.0")
 }
