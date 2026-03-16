@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:waffle_camera_plugin/waffle_camera_plugin.dart';
 import 'package:waffle_camera_plugin/waffle_camera_plugin_platform_interface.dart';
+import 'package:gallery_saver/gallery_saver.dart';
 
 void main() {
   runApp(const MyApp());
@@ -209,6 +211,29 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
     }
   }
 
+  Future<void> _saveToGallery() async {
+    if (_recordedFilePath == null) return;
+
+    try {
+      final success = await GallerySaver.saveVideo(_recordedFilePath!);
+      if (success == true) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Video saved to gallery')),
+          );
+        }
+      } else {
+        setState(() {
+          _errorMessage = 'Failed to save video to gallery';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Error saving to gallery: $e';
+      });
+    }
+  }
+
   void _switchCamera() {
     if (_cameras.length < 2) return;
 
@@ -301,6 +326,12 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
                   Text(
                     _recordedFilePath!,
                     style: const TextStyle(fontSize: 12),
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton.icon(
+                    onPressed: _saveToGallery,
+                    icon: const Icon(Icons.save_alt),
+                    label: const Text('Save to Gallery'),
                   ),
                 ],
               ),
