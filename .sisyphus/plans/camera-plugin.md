@@ -438,7 +438,7 @@ Max Concurrent: 6 (Wave 2)
   - Message: `feat(dart): implement method channel mappings`
   - Files: `lib/waffle_camera_plugin_method_channel.dart`
 
-- [ ] 5. Unit Tests for Dart Layer - Write comprehensive unit tests
+- [x] 5. Unit Tests for Dart Layer - Write comprehensive unit tests
 
   **What to do**:
   - Create/update tests in `test/` directory:
@@ -490,7 +490,7 @@ Max Concurrent: 6 (Wave 2)
   - Files: `test/*.dart`
   - Pre-commit: `flutter test`
 
-- [ ] 6. Android Native - Project Setup and Permissions
+- [x] 6. Android Native - Project Setup and Permissions
 
   **What to do**:
   - Update `android/build.gradle` with CameraX dependencies:
