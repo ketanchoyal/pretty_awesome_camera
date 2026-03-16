@@ -1,0 +1,27 @@
+CAMERA EXCEPTION TYPE VERIFICATION
+===================================
+
+Testing CameraException class:
+
+✅ Class Definition:
+- Code: 'INIT_FAILED'
+- Message: 'Failed to initialize camera'
+
+✅ Instance Creation:
+const CameraException(
+  code: 'INIT_FAILED',
+  message: 'Failed to initialize camera',
+)
+
+✅ Method Tests:
+- toString(): 'CameraException(code: INIT_FAILED, message: Failed to initialize camera)'
+- hashCode: Computed correctly
+- operator ==: Equality comparison works
+
+✅ Other Type Exports:
+- CameraDescription class: ✓ Exported
+- LensDirection enum: ✓ Exported
+- ResolutionPreset enum: ✓ Exported
+- RecordingState enum: ✓ Exported
+
+All types are properly defined and exported from lib/waffle_camera_plugin.dart

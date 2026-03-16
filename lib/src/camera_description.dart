@@ -33,6 +33,24 @@ class CameraDescription {
   @override
   int get hashCode =>
       name.hashCode ^ lensDirection.hashCode ^ sensorOrientation.hashCode;
+
+  /// Converts this [CameraDescription] to a JSON map for platform channel communication.
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'lensDirection': lensDirection.name,
+    'sensorOrientation': sensorOrientation,
+  };
+
+  /// Creates a [CameraDescription] from a JSON map (from platform channel).
+  static CameraDescription fromJson(Map<dynamic, dynamic> json) {
+    return CameraDescription(
+      name: json['name'] as String,
+      lensDirection: LensDirection.values.firstWhere(
+        (e) => e.name == json['lensDirection'],
+      ),
+      sensorOrientation: json['sensorOrientation'] as int,
+    );
+  }
 }
 
 /// Defines the direction the camera lens is facing.
