@@ -6,6 +6,9 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
     private var cameras: [Int: CameraInstance] = [:]
     private var nextCameraId = 0
     private var textureRegistry: FlutterTextureRegistry?
+    private var eventChannels: [Int: FlutterEventChannel] = [:]
+    private var eventSinks: [Int: FlutterEventSink] = [:]
+    private var registrar: FlutterPluginRegistrar?
     
     struct CameraInstance {
         let cameraId: Int
@@ -20,6 +23,7 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
         let channel = FlutterMethodChannel(name: "waffle_camera_plugin", binaryMessenger: registrar.messenger())
         let instance = WaffleCameraPlugin()
         instance.textureRegistry = registrar.textures()
+        instance.registrar = registrar
         registrar.addMethodCallDelegate(instance, channel: channel)
     }
     
@@ -133,6 +137,16 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
             
             cameras[cameraId] = cameraInstance
             
+            if let registrar = registrar {
+                let eventChannel = FlutterEventChannel(
+                    name: "waffle_camera_plugin/recording_state_\(cameraId)",
+                    binaryMessenger: registrar.messenger()
+                )
+                let streamHandler = RecordingStateStreamHandler()
+                eventChannel.setStreamHandler(streamHandler)
+                eventChannels[cameraId] = eventChannel
+            }
+            
             DispatchQueue.global(qos: .userInitiated).async {
                 captureSession.startRunning()
             }
@@ -159,9 +173,14 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
         if let textureId = cameraInstance.textureId {
             textureRegistry?.unregisterTexture(textureId)
         }
-        cameras.removeValue(forKey: cameraId)
         
-         result(nil)
+        if let eventChannel = eventChannels[cameraId] {
+            eventChannel.setStreamHandler(nil)
+            eventChannels.removeValue(forKey: cameraId)
+        }
+        
+        cameras.removeValue(forKey: cameraId)
+        result(nil)
     }
     
     private func startRecording(call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -249,6 +268,20 @@ class CameraPreviewTexture: NSObject, FlutterTexture {
 
 extension WaffleCameraPlugin: AVCaptureFileOutputRecordingDelegate {
     public func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
-        // Handle recording completion if needed
+    }
+}
+
+class RecordingStateStreamHandler: NSObject, FlutterStreamHandler {
+    private var eventSink: FlutterEventSink?
+    
+    func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        self.eventSink = events
+        events("idle")
+        return nil
+    }
+    
+    func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        self.eventSink = nil
+        return nil
     }
 }

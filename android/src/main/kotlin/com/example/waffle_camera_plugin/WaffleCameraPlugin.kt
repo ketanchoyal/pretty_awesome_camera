@@ -17,6 +17,7 @@ import androidx.lifecycle.LifecycleOwner
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
@@ -30,6 +31,8 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private var activity: Activity? = null
     private var flutterPluginBinding: FlutterPlugin.FlutterPluginBinding? = null
     private val cameras = mutableMapOf<Int, CameraInstance>()
+    private val eventChannels = mutableMapOf<Int, EventChannel>()
+    private val eventSinks = mutableMapOf<Int, EventChannel.EventSink>()
     private var nextCameraId = 0
     private val executor = Executors.newSingleThreadExecutor()
 
