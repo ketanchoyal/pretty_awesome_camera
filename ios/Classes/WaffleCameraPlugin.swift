@@ -117,9 +117,16 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
         }
         
         do {
-            let input = try AVCaptureDeviceInput(device: device)
-            if captureSession.canAddInput(input) {
-                captureSession.addInput(input)
+            let videoInput = try AVCaptureDeviceInput(device: device)
+            if captureSession.canAddInput(videoInput) {
+                captureSession.addInput(videoInput)
+            }
+            
+            if let audioDevice = AVCaptureDevice.default(for: .audio) {
+                let audioInput = try AVCaptureDeviceInput(device: audioDevice)
+                if captureSession.canAddInput(audioInput) {
+                    captureSession.addInput(audioInput)
+                }
             }
             
             let videoOutput = AVCaptureMovieFileOutput()

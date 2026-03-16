@@ -229,6 +229,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
             val recording = videoCapture.output
                 .prepareRecording(activity, outputOptions)
+                .withAudioEnabled()
                 .start(ContextCompat.getMainExecutor(activity)) { event -> }
 
             cameraInstance.recording = recording
