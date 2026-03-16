@@ -3,56 +3,418 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:waffle_camera_plugin/waffle_camera_plugin.dart';
+import 'package:waffle_camera_plugin/waffle_camera_plugin_platform_interface.dart';
 
 void main() {
   runApp(const MyApp());
 }
 
-class MyApp extends StatefulWidget {
+class MyApp extends StatelessWidget {
   const MyApp({super.key});
-
-  @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  String _platformVersion = 'Unknown';
-  final _waffleCameraPlugin = WaffleCameraPlugin();
-
-  @override
-  void initState() {
-    super.initState();
-    initPlatformState();
-  }
-
-  // Platform messages are asynchronous, so we initialize in an async method.
-  Future<void> initPlatformState() async {
-    String platformVersion;
-    // Platform messages may fail, so we use a try/catch PlatformException.
-    // We also handle the message potentially returning null.
-    try {
-      platformVersion =
-          await _waffleCameraPlugin.getPlatformVersion() ?? 'Unknown platform version';
-    } on PlatformException {
-      platformVersion = 'Failed to get platform version.';
-    }
-
-    // If the widget was removed from the tree while the asynchronous platform
-    // message was in flight, we want to discard the reply rather than calling
-    // setState to update our non-existent appearance.
-    if (!mounted) return;
-
-    setState(() {
-      _platformVersion = platformVersion;
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      home: Scaffold(
-        appBar: AppBar(title: const Text('Plugin example app')),
-        body: Center(child: Text('Running on: $_platformVersion\n')),
+      title: 'Waffle Camera Plugin Demo',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        useMaterial3: true,
+      ),
+      home: const CameraDemoScreen(),
+    );
+  }
+}
+
+class CameraDemoScreen extends StatefulWidget {
+  const CameraDemoScreen({super.key});
+
+  @override
+  State<CameraDemoScreen> createState() => _CameraDemoScreenState();
+}
+
+class _CameraDemoScreenState extends State<CameraDemoScreen> {
+  final _platform = WaffleCameraPluginPlatform.instance;
+
+  List<CameraDescription> _cameras = [];
+  int? _selectedCameraIndex;
+  int? _cameraId;
+  int? _textureId;
+
+  bool _isInitializing = false;
+  bool _isRecording = false;
+  bool _isPaused = false;
+  String? _errorMessage;
+  String? _recordedFilePath;
+
+  RecordingState _recordingState = RecordingState.idle;
+  StreamSubscription<RecordingState>? _recordingStateSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCameras();
+  }
+
+  @override
+  void dispose() {
+    _recordingStateSubscription?.cancel();
+    _disposeCamera();
+    super.dispose();
+  }
+
+  Future<void> _loadCameras() async {
+    try {
+      final cameras = await _platform.getAvailableCameras();
+      setState(() {
+        _cameras = cameras;
+        if (cameras.isNotEmpty) {
+          _selectedCameraIndex = 0;
+        }
+      });
+    } on PlatformException catch (e) {
+      setState(() {
+        _errorMessage = 'Failed to get cameras: ${e.message}';
+      });
+    }
+  }
+
+  Future<void> _initializeCamera() async {
+    if (_selectedCameraIndex == null || _cameras.isEmpty) return;
+
+    setState(() {
+      _isInitializing = true;
+      _errorMessage = null;
+    });
+
+    try {
+      // Dispose existing camera first
+      await _disposeCamera();
+
+      final camera = _cameras[_selectedCameraIndex!];
+
+      // Create camera
+      final cameraId = await _platform.createCamera(
+        camera,
+        ResolutionPreset.high,
+      );
+      _cameraId = cameraId;
+
+      // Initialize camera
+      await _platform.initializeCamera(cameraId);
+
+      // Subscribe to recording state changes
+      _recordingStateSubscription = _platform
+          .onRecordingStateChanged(cameraId)
+          .listen((state) {
+            setState(() {
+              _recordingState = state;
+            });
+          });
+
+      setState(() {
+        _textureId = cameraId; // Use camera ID as texture ID for now
+        _isInitializing = false;
+        _recordedFilePath = null;
+      });
+    } on PlatformException catch (e) {
+      setState(() {
+        _errorMessage = 'Failed to initialize camera: ${e.message}';
+        _isInitializing = false;
+      });
+    }
+  }
+
+  Future<void> _disposeCamera() async {
+    if (_cameraId != null) {
+      await _recordingStateSubscription?.cancel();
+      _recordingStateSubscription = null;
+
+      try {
+        await _platform.disposeCamera(_cameraId!);
+      } catch (e) {
+        // Ignore dispose errors
+      }
+
+      setState(() {
+        _cameraId = null;
+        _textureId = null;
+        _isRecording = false;
+        _isPaused = false;
+        _recordingState = RecordingState.idle;
+      });
+    }
+  }
+
+  Future<void> _startRecording() async {
+    if (_cameraId == null) return;
+
+    try {
+      await _platform.startRecording(_cameraId!);
+      setState(() {
+        _isRecording = true;
+        _isPaused = false;
+        _recordedFilePath = null;
+      });
+    } on PlatformException catch (e) {
+      setState(() {
+        _errorMessage = 'Failed to start recording: ${e.message}';
+      });
+    }
+  }
+
+  Future<void> _pauseRecording() async {
+    if (_cameraId == null) return;
+
+    try {
+      await _platform.pauseRecording(_cameraId!);
+      setState(() {
+        _isPaused = true;
+      });
+    } on PlatformException catch (e) {
+      setState(() {
+        _errorMessage = 'Failed to pause recording: ${e.message}';
+      });
+    }
+  }
+
+  Future<void> _resumeRecording() async {
+    if (_cameraId == null) return;
+
+    try {
+      await _platform.resumeRecording(_cameraId!);
+      setState(() {
+        _isPaused = false;
+      });
+    } on PlatformException catch (e) {
+      setState(() {
+        _errorMessage = 'Failed to resume recording: ${e.message}';
+      });
+    }
+  }
+
+  Future<void> _stopRecording() async {
+    if (_cameraId == null) return;
+
+    try {
+      final filePath = await _platform.stopRecording(_cameraId!);
+      setState(() {
+        _isRecording = false;
+        _isPaused = false;
+        _recordedFilePath = filePath;
+      });
+    } on PlatformException catch (e) {
+      setState(() {
+        _errorMessage = 'Failed to stop recording: ${e.message}';
+      });
+    }
+  }
+
+  void _switchCamera() {
+    if (_cameras.length < 2) return;
+
+    setState(() {
+      _selectedCameraIndex = (_selectedCameraIndex! + 1) % _cameras.length;
+    });
+
+    // Re-initialize with new camera
+    _initializeCamera();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Waffle Camera Plugin Demo'),
+        actions: [
+          if (_cameras.length > 1)
+            IconButton(
+              icon: const Icon(Icons.switch_camera),
+              onPressed: _cameraId == null ? null : _switchCamera,
+              tooltip: 'Switch Camera',
+            ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Error message
+          if (_errorMessage != null)
+            Container(
+              width: double.infinity,
+              color: Colors.red.shade100,
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                _errorMessage!,
+                style: TextStyle(color: Colors.red.shade900),
+              ),
+            ),
+
+          // Camera preview
+          Expanded(child: _buildCameraPreview()),
+
+          // Camera info
+          if (_selectedCameraIndex != null && _cameras.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Text(
+                'Camera: ${_cameras[_selectedCameraIndex!].name}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+
+          // Recording state
+          if (_isRecording)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    _isPaused ? Icons.pause_circle : Icons.fiber_manual_record,
+                    color: _isPaused ? Colors.orange : Colors.red,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _isPaused ? 'PAUSED' : 'RECORDING',
+                    style: TextStyle(
+                      color: _isPaused ? Colors.orange : Colors.red,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Recorded file info
+          if (_recordedFilePath != null)
+            Container(
+              width: double.infinity,
+              color: Colors.green.shade100,
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Video saved to:',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _recordedFilePath!,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+
+          // Control buttons
+          _buildControlButtons(),
+
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCameraPreview() {
+    if (_isInitializing) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Initializing camera...'),
+          ],
+        ),
+      );
+    }
+
+    if (_textureId != null) {
+      return CameraPreview(cameraId: _textureId!, aspectRatio: 16 / 9);
+    }
+
+    if (_cameras.isEmpty) {
+      return const Center(child: Text('No cameras available'));
+    }
+
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.camera_alt, size: 64, color: Colors.grey),
+          const SizedBox(height: 16),
+          Text(
+            'Camera not initialized',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          ElevatedButton.icon(
+            onPressed: _initializeCamera,
+            icon: const Icon(Icons.camera),
+            label: const Text('Initialize Camera'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildControlButtons() {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          // Initialize/Dispose button
+          if (_textureId == null)
+            ElevatedButton.icon(
+              onPressed: _isInitializing ? null : _initializeCamera,
+              icon: const Icon(Icons.camera),
+              label: const Text('Start Camera'),
+            )
+          else
+            ElevatedButton.icon(
+              onPressed: _isRecording ? null : _disposeCamera,
+              icon: const Icon(Icons.close),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              label: const Text('Stop Camera'),
+            ),
+
+          // Recording controls
+          if (_textureId != null) ...[
+            if (!_isRecording)
+              ElevatedButton.icon(
+                onPressed: _startRecording,
+                icon: const Icon(Icons.fiber_manual_record),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+                label: const Text('Record'),
+              )
+            else ...[
+              // Pause/Resume button
+              ElevatedButton.icon(
+                onPressed: _isPaused ? _resumeRecording : _pauseRecording,
+                icon: Icon(_isPaused ? Icons.play_arrow : Icons.pause),
+                label: Text(_isPaused ? 'Resume' : 'Pause'),
+              ),
+
+              // Stop button
+              ElevatedButton.icon(
+                onPressed: _stopRecording,
+                icon: const Icon(Icons.stop),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+                label: const Text('Stop'),
+              ),
+            ],
+          ],
+        ],
       ),
     );
   }
