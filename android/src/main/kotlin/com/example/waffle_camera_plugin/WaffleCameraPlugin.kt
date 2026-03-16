@@ -151,6 +151,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 cameraInstance.textureEntry = textureEntry
                 
                 val preview = Preview.Builder()
+                    .setTargetRotation(android.view.Surface.ROTATION_0)
                     .build()
                     .also {
                         it.setSurfaceProvider { request ->
