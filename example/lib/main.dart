@@ -8,6 +8,7 @@ import 'package:waffle_camera_plugin/waffle_camera_plugin.dart';
 import 'package:waffle_camera_plugin/waffle_camera_plugin_platform_interface.dart';
 import 'package:gal/gal.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 
 void main() {
   runApp(const MyApp());
@@ -221,17 +222,36 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
       PermissionStatus status;
 
       if (Platform.isIOS) {
-        // Check current status first
         status = await Permission.photos.status;
-
-        // If not determined yet, request it
         if (status.isDenied || status.isRestricted) {
           status = await Permission.photos.request();
         }
       } else {
-        status = await Permission.storage.status;
-        if (status.isDenied) {
-          status = await Permission.storage.request();
+        if (Platform.isAndroid) {
+          final androidInfo = await DeviceInfoPlugin().androidInfo;
+          final sdkInt = androidInfo.version.sdkInt;
+
+          if (sdkInt >= 33) {
+            status = await Permission.photos.status;
+            if (status.isDenied) {
+              status = await Permission.photos.request();
+            }
+          } else if (sdkInt >= 29) {
+            status = await Permission.storage.status;
+            if (status.isDenied) {
+              status = await Permission.storage.request();
+            }
+          } else {
+            status = await Permission.storage.status;
+            if (status.isDenied) {
+              status = await Permission.storage.request();
+            }
+          }
+        } else {
+          status = await Permission.storage.status;
+          if (status.isDenied) {
+            status = await Permission.storage.request();
+          }
         }
       }
 
