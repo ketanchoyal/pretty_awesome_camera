@@ -174,12 +174,12 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
             if (methodCall.method == 'initializeCamera') {
-              return null;
+              return 42; // texture ID
             }
             return null;
           });
 
-      expect(() => platform.initializeCamera(0), returnsNormally);
+      expect(await platform.initializeCamera(0), 42);
     });
 
     test('throws CameraException on PlatformException', () async {

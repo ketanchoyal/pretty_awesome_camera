@@ -24,7 +24,7 @@ class MockWaffleCameraPluginPlatform
   }
 
   @override
-  Future<void> initializeCamera(int cameraId) {
+  Future<int> initializeCamera(int cameraId) {
     throw UnimplementedError();
   }
 
@@ -64,7 +64,7 @@ class MockWaffleCameraPluginPlatform
   }
 
   @override
-  Future<void> switchCamera(int cameraId) {
+  Future<int> switchCamera(int cameraId) {
     throw UnimplementedError();
   }
 
@@ -96,7 +96,7 @@ class ConcreteWaffleCameraPluginPlatform extends WaffleCameraPluginPlatform {
   }
 
   @override
-  Future<void> initializeCamera(int cameraId) {
+  Future<int> initializeCamera(int cameraId) {
     throw UnimplementedError();
   }
 
@@ -136,7 +136,7 @@ class ConcreteWaffleCameraPluginPlatform extends WaffleCameraPluginPlatform {
   }
 
   @override
-  Future<void> switchCamera(int cameraId) {
+  Future<int> switchCamera(int cameraId) {
     throw UnimplementedError();
   }
 

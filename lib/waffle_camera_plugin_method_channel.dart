@@ -78,11 +78,19 @@ class MethodChannelWaffleCameraPlugin extends WaffleCameraPluginPlatform {
   }
 
   @override
-  Future<void> initializeCamera(int cameraId) async {
+  Future<int> initializeCamera(int cameraId) async {
     try {
-      await methodChannel.invokeMethod<void>('initializeCamera', {
-        'cameraId': cameraId,
-      });
+      final textureId = await methodChannel.invokeMethod<int>(
+        'initializeCamera',
+        {'cameraId': cameraId},
+      );
+      if (textureId == null) {
+        throw CameraException(
+          code: 'invalid_response',
+          message: 'Platform returned null texture ID',
+        );
+      }
+      return textureId;
     } on PlatformException catch (e) {
       throw CameraException(
         code: e.code,
@@ -206,11 +214,18 @@ class MethodChannelWaffleCameraPlugin extends WaffleCameraPluginPlatform {
   }
 
   @override
-  Future<void> switchCamera(int cameraId) async {
+  Future<int> switchCamera(int cameraId) async {
     try {
-      await methodChannel.invokeMethod<void>('switchCamera', {
+      final textureId = await methodChannel.invokeMethod<int>('switchCamera', {
         'cameraId': cameraId,
       });
+      if (textureId == null) {
+        throw CameraException(
+          code: 'invalid_response',
+          message: 'Platform returned null texture ID from switchCamera',
+        );
+      }
+      return textureId;
     } on PlatformException catch (e) {
       throw CameraException(
         code: e.code,

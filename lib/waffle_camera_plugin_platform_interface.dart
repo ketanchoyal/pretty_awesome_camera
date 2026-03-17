@@ -45,7 +45,9 @@ abstract class WaffleCameraPluginPlatform extends PlatformInterface {
   }
 
   /// Initializes the camera with the given ID.
-  Future<void> initializeCamera(int cameraId) {
+  ///
+  /// Returns the texture ID for rendering the camera preview.
+  Future<int> initializeCamera(int cameraId) {
     throw UnimplementedError('initializeCamera() has not been implemented.');
   }
 
@@ -89,12 +91,13 @@ abstract class WaffleCameraPluginPlatform extends PlatformInterface {
     throw UnimplementedError('canSwitchCamera() has not been implemented.');
   }
 
-  /// Switches to the camera with the given ID during recording.
+  /// Switches to the opposite camera during recording (front ↔ back).
   ///
-  /// This method allows switching to a different camera without stopping the recording.
+  /// Returns the new texture ID if the camera was switched (iOS creates a new
+  /// texture), or the current texture ID unchanged (Android reuses its texture).
   /// Throws [CameraException] with code 'invalidState' if not currently recording.
   /// Throws [CameraException] with code 'switchInProgress' if a switch is already in progress.
-  Future<void> switchCamera(int cameraId) {
+  Future<int> switchCamera(int cameraId) {
     throw UnimplementedError('switchCamera() has not been implemented.');
   }
 
