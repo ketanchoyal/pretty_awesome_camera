@@ -32,6 +32,8 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.concurrent.Executors
 
+import java.nio.ByteBuffer
+
 class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private lateinit var channel: MethodChannel
     private var activity: Activity? = null
@@ -48,9 +50,11 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         var videoCapture: VideoCapture<Recorder>? = null,
         var preview: Preview? = null,
         var recording: Recording? = null,
+        var recordingURL: String? = null,
         var segmentFiles: MutableList<File> = mutableListOf(),
         var currentSegmentIndex: Int = 0,
-        var isSwitching: Boolean = false
+        var isSwitching: Boolean = false,
+        var switchingHandler: (() -> Unit)? = null
     )
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -386,17 +390,19 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         }
 
         cameraInstance.isSwitching = true
-
+        
         val recording = cameraInstance.recording!!
         cameraInstance.recording = null
-
+        
+        cameraInstance.segmentFiles.add(File(cameraInstance.recordingURL!!))
+        cameraInstance.recordingURL = null
+        
         val newLensDirection = if ((cameraInstance.cameraDescription?.get("lensDirection") as? String) == "front") "back" else "front"
-
-        recording.start(ContextCompat.getMainExecutor(activity)) { event ->
-            if (event is VideoRecordEvent.Finalize) {
-                performCameraSwitch(cameraId, cameraInstance, newLensDirection, activity, result)
-            }
+        
+        cameraInstance.switchingHandler = {
+            performCameraSwitch(cameraId!!, cameraInstance, newLensDirection, activity, result)
         }
+        
         recording.stop()
     }
 
@@ -553,7 +559,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private fun copyTrack(extractor: MediaExtractor, muxer: MediaMuxer, trackIndex: Int) {
         val bufferSize = 256 * 1024
         val buffer = android.media.MediaCodec.BufferInfo()
-        val byteBuffer = android.nio.ByteBuffer.allocate(bufferSize)
+        val byteBuffer = ByteBuffer.allocate(bufferSize)
         
         while (true) {
             val sampleSize = extractor.readSampleData(byteBuffer, 0)
