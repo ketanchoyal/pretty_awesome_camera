@@ -181,10 +181,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 val textureEntry = binding.textureRegistry.createSurfaceTexture()
                 cameraInstance.textureEntry = textureEntry
 
-                val rotation = orientationListener?.getRotation() ?: Surface.ROTATION_0
-
                 val preview = Preview.Builder()
-                    .setTargetRotation(rotation)
                     .build()
                 cameraInstance.preview = preview
 
@@ -197,7 +194,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 val useCaseGroup = UseCaseGroup.Builder()
                     .addUseCase(preview)
                     .addUseCase(videoCapture)
-                    .setViewPort(ViewPort.Builder(Rational(9, 16), rotation).build())
+                    .setViewPort(ViewPort.Builder(Rational(9, 16), Surface.ROTATION_0).build())
                     .build()
 
                 cameraProvider.unbindAll()
@@ -671,10 +668,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                     return@addListener
                 }
 
-                val switchRotation = orientationListener?.getRotation() ?: Surface.ROTATION_0
-
                 val preview = Preview.Builder()
-                    .setTargetRotation(switchRotation)
                     .build()
                     .also {
                         it.setSurfaceProvider(createSurfaceProvider(textureEntry))
@@ -690,7 +684,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 val useCaseGroup = UseCaseGroup.Builder()
                     .addUseCase(preview)
                     .addUseCase(videoCapture)
-                    .setViewPort(ViewPort.Builder(Rational(9, 16), switchRotation).build())
+                    .setViewPort(ViewPort.Builder(Rational(9, 16), Surface.ROTATION_0).build())
                     .build()
 
                 val camera = cameraProvider.bindToLifecycle(
@@ -705,7 +699,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 cameraInstance.segmentFiles.add(segmentFile)
 
                 val outputOptions = FileOutputOptions.Builder(segmentFile).build()
-                videoCapture.targetRotation = switchRotation
+                videoCapture.targetRotation = orientationListener?.getRotation() ?: Surface.ROTATION_0
                 val recording = videoCapture.output
                     .prepareRecording(activity, outputOptions)
                     .withAudioEnabled()
