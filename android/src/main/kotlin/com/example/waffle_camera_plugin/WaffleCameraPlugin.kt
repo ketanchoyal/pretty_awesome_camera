@@ -623,57 +623,76 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
         val activity = this.activity ?: throw IllegalStateException("Activity not available")
         val outputFile = File(activity.cacheDir, "merged_${System.currentTimeMillis()}.mp4")
-        
+
         val muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        
+
         try {
             var videoTrackIndex = -1
             var audioTrackIndex = -1
             var muxerStarted = false
-            
-            for (segmentFile in segmentFiles) {
+
+            var lastVideoTimestamp: Long = 0
+            var lastAudioTimestamp: Long = 0
+
+            for ((segmentIndex, segmentFile) in segmentFiles.withIndex()) {
                 val extractor = MediaExtractor()
                 extractor.setDataSource(segmentFile.absolutePath)
-                
+
                 val trackCount = extractor.trackCount
+                val trackMap = mutableMapOf<Int, Int>()
+
                 for (i in 0 until trackCount) {
                     val format = extractor.getTrackFormat(i)
                     val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
-                    
+
                     if (mime.startsWith("video/")) {
                         if (videoTrackIndex < 0) {
                             videoTrackIndex = muxer.addTrack(format)
                         }
+                        trackMap[i] = videoTrackIndex
                     } else if (mime.startsWith("audio/")) {
                         if (audioTrackIndex < 0) {
                             audioTrackIndex = muxer.addTrack(format)
                         }
+                        trackMap[i] = audioTrackIndex
                     }
                 }
-                
+
                 if (!muxerStarted && (videoTrackIndex >= 0 || audioTrackIndex >= 0)) {
                     muxer.start()
                     muxerStarted = true
                 }
-                
+
+                val segmentBaseTimestamp = when {
+                    segmentIndex == 0 -> 0L
+                    lastVideoTimestamp > lastAudioTimestamp -> lastVideoTimestamp
+                    else -> lastAudioTimestamp
+                }
+
                 for (i in 0 until trackCount) {
                     val format = extractor.getTrackFormat(i)
                     val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
-                    
-                    if ((mime.startsWith("video/") && videoTrackIndex >= 0) ||
-                        (mime.startsWith("audio/") && audioTrackIndex >= 0)) {
-                        extractor.selectTrack(i)
-                        val trackIndex = if (mime.startsWith("video/")) videoTrackIndex else audioTrackIndex
-                        copyTrack(extractor, muxer, trackIndex)
+                    val muxerTrackIndex = trackMap[i] ?: continue
+
+                    extractor.selectTrack(i)
+                    val isVideo = mime.startsWith("video/")
+                    val lastTimestamp = copyTrackWithTimestampOffset(
+                        extractor, muxer, muxerTrackIndex, segmentBaseTimestamp, isVideo
+                    )
+
+                    if (isVideo) {
+                        lastVideoTimestamp = lastTimestamp
+                    } else {
+                        lastAudioTimestamp = lastTimestamp
                     }
                 }
-                
+
                 extractor.release()
             }
-            
+
             muxer.stop()
             muxer.release()
-            
+
             return outputFile
         } catch (e: Exception) {
             try { muxer.stop() } catch (_: Exception) {}
@@ -685,28 +704,43 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         }
     }
 
-    private fun copyTrack(extractor: MediaExtractor, muxer: MediaMuxer, trackIndex: Int) {
+    private fun copyTrackWithTimestampOffset(
+        extractor: MediaExtractor,
+        muxer: MediaMuxer,
+        trackIndex: Int,
+        timestampOffset: Long,
+        isVideo: Boolean
+    ): Long {
         val bufferSize = 256 * 1024
         val buffer = android.media.MediaCodec.BufferInfo()
         val byteBuffer = ByteBuffer.allocate(bufferSize)
-        
+
+        var lastTimestamp = timestampOffset
+
         while (true) {
             val sampleSize = extractor.readSampleData(byteBuffer, 0)
-            
+
             if (sampleSize < 0) {
                 break
             }
-            
-            buffer.presentationTimeUs = extractor.sampleTime
+
+            val originalTimestamp = extractor.sampleTime
+            val adjustedTimestamp = originalTimestamp + timestampOffset
+
+            buffer.presentationTimeUs = adjustedTimestamp
             buffer.size = sampleSize
             buffer.offset = 0
             buffer.flags = extractor.sampleFlags
-            
+
             byteBuffer.position(0)
             byteBuffer.limit(sampleSize)
             muxer.writeSampleData(trackIndex, byteBuffer, buffer)
+
+            lastTimestamp = adjustedTimestamp
             extractor.advance()
         }
+
+        return lastTimestamp
     }
 
     private fun cleanupSegmentFiles(segmentFiles: List<File>) {
