@@ -185,9 +185,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 val recorder = Recorder.Builder()
                     .setExecutor(executor)
                     .build()
-                val videoCapture = VideoCapture.Builder(recorder)
-                    .setTargetRotation(rotation)
-                    .build()
+                val videoCapture = VideoCapture.withOutput(recorder)
                 cameraInstance.videoCapture = videoCapture
 
                 val useCaseGroup = UseCaseGroup.Builder()
@@ -287,13 +285,16 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         try {
             cameraInstance.segmentFiles.clear()
             cameraInstance.currentSegmentIndex = 0
-            
+
             val file = File(activity.cacheDir, "segment_${System.currentTimeMillis()}_0.mp4")
             cameraInstance.recordingURL = file.absolutePath
             cameraInstance.segmentFiles.add(file)
             cameraInstance.currentSegmentIndex = 1
-            
+
             val outputOptions = FileOutputOptions.Builder(file).build()
+
+            val rotation = activity.windowManager.defaultDisplay.rotation
+            videoCapture.targetRotation = rotation
 
             val recording = videoCapture.output
                 .prepareRecording(activity, outputOptions)
@@ -402,6 +403,10 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             cameraInstance.currentSegmentIndex++
 
             val outputOptions = FileOutputOptions.Builder(segmentFile).build()
+
+            val resumeRotation = activity.windowManager.defaultDisplay.rotation
+            videoCapture.targetRotation = resumeRotation
+
             val recording = videoCapture.output
                 .prepareRecording(activity, outputOptions)
                 .withAudioEnabled()
@@ -673,9 +678,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 val recorder = Recorder.Builder()
                     .setExecutor(executor)
                     .build()
-                val videoCapture = VideoCapture.Builder(recorder)
-                    .setTargetRotation(switchRotation)
-                    .build()
+                val videoCapture = VideoCapture.withOutput(recorder)
                 cameraInstance.videoCapture = videoCapture
 
                 val useCaseGroup = UseCaseGroup.Builder()
@@ -696,6 +699,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 cameraInstance.segmentFiles.add(segmentFile)
 
                 val outputOptions = FileOutputOptions.Builder(segmentFile).build()
+                videoCapture.targetRotation = switchRotation
                 val recording = videoCapture.output
                     .prepareRecording(activity, outputOptions)
                     .withAudioEnabled()
