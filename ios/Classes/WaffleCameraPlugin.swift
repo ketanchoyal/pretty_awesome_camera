@@ -219,7 +219,9 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
         
         if cameraInstance.isRecording, let assetWriter = cameraInstance.assetWriter {
             cameraInstance.isRecording = false
-            assetWriter.finishWriting {}
+            if assetWriter.status == .writing {
+                assetWriter.finishWriting {}
+            }
         }
         
         cameraInstance.captureSession?.stopRunning()
@@ -446,16 +448,27 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
         
         let recordingPath = cameraInstance.recordingURL?.path
         
-        assetWriter.finishWriting {
-            DispatchQueue.main.async {
-                if assetWriter.status == .completed {
-                    result(recordingPath)
-                } else {
-                    let error = assetWriter.error?.localizedDescription ?? "Unknown error"
-                    result(FlutterError(code: "FINISH_ERROR", message: error, details: nil))
+        if assetWriter.status == .writing {
+            assetWriter.finishWriting {
+                DispatchQueue.main.async {
+                    if assetWriter.status == .completed {
+                        result(recordingPath)
+                    } else {
+                        let error = assetWriter.error?.localizedDescription ?? "Unknown error"
+                        result(FlutterError(code: "FINISH_ERROR", message: error, details: nil))
+                    }
+                }
+                
+                if var inst = self.cameras[cameraId] {
+                    inst.assetWriter = nil
+                    inst.videoWriterInput = nil
+                    inst.audioWriterInput = nil
+                    inst.pixelBufferAdaptor = nil
+                    inst.recordingURL = nil
+                    self.cameras[cameraId] = inst
                 }
             }
-            
+        } else {
             if var inst = self.cameras[cameraId] {
                 inst.assetWriter = nil
                 inst.videoWriterInput = nil
@@ -464,6 +477,7 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
                 inst.recordingURL = nil
                 self.cameras[cameraId] = inst
             }
+            result(FlutterError(code: "NOT_RECORDING", message: "Recording was not started", details: nil))
         }
     }
     
