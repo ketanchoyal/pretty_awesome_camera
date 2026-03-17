@@ -485,20 +485,11 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
         sessionQueue.sync {
             guard var inst = cameras[cameraId] else { return }
             
-            if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
-                inst.previewTexture?.latestPixelBuffer = pixelBuffer
-                if let textureId = inst.textureId {
-                    textureRegistry?.textureFrameAvailable(textureId)
-                }
-            }
-            
             guard inst.isRecording, let assetWriter = inst.assetWriter else {
-                cameras[cameraId] = inst
                 return
             }
             
             guard !inst.isPaused else {
-                cameras[cameraId] = inst
                 return
             }
             
@@ -508,7 +499,6 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
                 if assetWriter.status == .unknown {
                     assetWriter.startWriting()
                     assetWriter.startSession(atSourceTime: currentTime)
-                    inst.sessionStartTime = currentTime
                 }
                 inst.isFirstVideoFrame = false
                 inst.lastVideoSampleTime = currentTime

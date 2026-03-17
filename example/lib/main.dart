@@ -6,7 +6,7 @@ import 'dart:developer' as developer;
 import 'package:flutter/services.dart';
 import 'package:waffle_camera_plugin/waffle_camera_plugin.dart';
 import 'package:waffle_camera_plugin/waffle_camera_plugin_platform_interface.dart';
-import 'package:gallery_saver/gallery_saver.dart';
+import 'package:gal/gal.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 void main() {
@@ -236,16 +236,16 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
       }
 
       if (status.isGranted || status.isLimited) {
-        final success = await GallerySaver.saveVideo(_recordedFilePath!);
-        if (success == true) {
+        try {
+          await Gal.putVideo(_recordedFilePath!);
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Video saved to gallery')),
             );
           }
-        } else {
+        } catch (e) {
           setState(() {
-            _errorMessage = 'Failed to save video to gallery';
+            _errorMessage = 'Failed to save video to gallery: $e';
           });
         }
       } else if (status.isDenied) {
