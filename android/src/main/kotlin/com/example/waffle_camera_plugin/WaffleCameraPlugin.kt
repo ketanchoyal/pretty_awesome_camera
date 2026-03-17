@@ -2,6 +2,10 @@ package com.example.waffle_camera_plugin
 
 import android.app.Activity
 import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.MediaExtractor
@@ -9,6 +13,7 @@ import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.util.Rational
 import android.view.Surface
+import android.view.OrientationEventListener
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
@@ -49,6 +54,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private val executor = Executors.newSingleThreadExecutor()
     private val eventChannels = mutableMapOf<Int, EventChannel>()
     private val streamHandlers = mutableMapOf<Int, RecordingStateStreamHandler>()
+    private var orientationListener: OrientationListener? = null
 
     data class CameraInstance(
         val cameraId: Int,
@@ -175,7 +181,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 val textureEntry = binding.textureRegistry.createSurfaceTexture()
                 cameraInstance.textureEntry = textureEntry
 
-                val rotation = activity.display?.rotation ?: Surface.ROTATION_0
+                val rotation = orientationListener?.getRotation() ?: Surface.ROTATION_0
 
                 val preview = Preview.Builder()
                     .setTargetRotation(rotation)
@@ -293,7 +299,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
             val outputOptions = FileOutputOptions.Builder(file).build()
 
-            val rotation = activity.display?.rotation ?: Surface.ROTATION_0
+            val rotation = orientationListener?.getRotation() ?: Surface.ROTATION_0
             videoCapture.targetRotation = rotation
 
             val recording = videoCapture.output
@@ -404,7 +410,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
             val outputOptions = FileOutputOptions.Builder(segmentFile).build()
 
-            val resumeRotation = activity.display?.rotation ?: Surface.ROTATION_0
+            val resumeRotation = orientationListener?.getRotation() ?: Surface.ROTATION_0
             videoCapture.targetRotation = resumeRotation
 
             val recording = videoCapture.output
@@ -665,7 +671,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                     return@addListener
                 }
 
-                val switchRotation = activity.display?.rotation ?: Surface.ROTATION_0
+                val switchRotation = orientationListener?.getRotation() ?: Surface.ROTATION_0
 
                 val preview = Preview.Builder()
                     .setTargetRotation(switchRotation)
@@ -878,17 +884,25 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
+        orientationListener = OrientationListener(binding.activity)
+        orientationListener?.start()
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
+        orientationListener?.stop()
+        orientationListener = null
         activity = null
     }
 
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
         activity = binding.activity
+        orientationListener = OrientationListener(binding.activity)
+        orientationListener?.start()
     }
 
     override fun onDetachedFromActivity() {
+        orientationListener?.stop()
+        orientationListener = null
         activity = null
     }
 }
@@ -903,5 +917,33 @@ class RecordingStateStreamHandler : EventChannel.StreamHandler {
 
     override fun onCancel(arguments: Any?) {
         eventSink = null
+    }
+}
+
+class OrientationListener(private val activity: Activity) {
+    private var orientationEventListener: OrientationEventListener? = null
+    private var currentOrientation: Int = 0
+
+    fun start() {
+        orientationEventListener = object : OrientationEventListener(activity, SensorManager.SENSOR_DELAY_NORMAL) {
+            override fun onOrientationChanged(orientation: Int) {
+                currentOrientation = when (orientation) {
+                    in 45..134 -> Surface.ROTATION_270
+                    in 135..224 -> Surface.ROTATION_180
+                    in 225..314 -> Surface.ROTATION_90
+                    else -> Surface.ROTATION_0
+                }
+            }
+        }
+        orientationEventListener?.enable()
+    }
+
+    fun stop() {
+        orientationEventListener?.disable()
+        orientationEventListener = null
+    }
+
+    fun getRotation(): Int {
+        return currentOrientation
     }
 }
