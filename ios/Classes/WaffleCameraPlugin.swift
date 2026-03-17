@@ -8,6 +8,7 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
     private var nextCameraId = 0
     private var textureRegistry: FlutterTextureRegistry?
     private var eventChannels: [Int: FlutterEventChannel] = [:]
+    private var streamHandlers: [Int: RecordingStateStreamHandler] = [:]
     private var registrar: FlutterPluginRegistrar?
     private let sessionQueue = DispatchQueue(label: "com.waffle.camera.session")
     private var stateLock = os_unfair_lock()
@@ -260,6 +261,7 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
                 let streamHandler = RecordingStateStreamHandler()
                 stateChannel.setStreamHandler(streamHandler)
                 eventChannels[cameraId] = stateChannel
+                streamHandlers[cameraId] = streamHandler
             }
             
             DispatchQueue.global(qos: .userInitiated).async {
@@ -308,7 +310,8 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
             eventChannel.setStreamHandler(nil)
             eventChannels.removeValue(forKey: cameraId)
         }
-        
+        streamHandlers.removeValue(forKey: cameraId)
+
         result(nil)
     }
     
