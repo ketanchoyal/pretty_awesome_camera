@@ -34,8 +34,10 @@ import io.flutter.view.TextureRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.nio.ByteBuffer
 
 class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
@@ -395,17 +397,66 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private fun canSwitchCamera(call: MethodCall, result: Result) {
         val cameraId = call.argument<Int>("cameraId")
         val cameraInstance = cameras[cameraId]
-        
+
         if (cameraInstance == null) {
             result.error("INVALID_CAMERA", "Camera not found", null)
             return
         }
-        
-        val canSwitch = cameraInstance.recording != null && !cameraInstance.isSwitching
+
+        val activity = this.activity
+        if (activity == null) {
+            result.success(false)
+            return
+        }
+
+        val hasFrontCamera = try {
+            val cameraManager = activity.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            cameraManager.cameraIdList.any { id ->
+                val characteristics = cameraManager.getCameraCharacteristics(id)
+                characteristics.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT
+            }
+        } catch (e: Exception) {
+            false
+        }
+
+        val hasBackCamera = try {
+            val cameraManager = activity.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            cameraManager.cameraIdList.any { id ->
+                val characteristics = cameraManager.getCameraCharacteristics(id)
+                characteristics.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+            }
+        } catch (e: Exception) {
+            false
+        }
+
+        val canSwitch = cameraInstance.recording != null &&
+                        !cameraInstance.isSwitching &&
+                        hasFrontCamera &&
+                        hasBackCamera
+
         result.success(canSwitch)
     }
 
     private fun canSwitchCurrentCamera(result: Result) {
+        val activity = this.activity
+        if (activity == null) {
+            result.success(false)
+            return
+        }
+
+        val cameraManager = activity.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val hasFront = cameraManager.cameraIdList.any { id ->
+            cameraManager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT
+        }
+        val hasBack = cameraManager.cameraIdList.any { id ->
+            cameraManager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+        }
+
+        if (!hasFront || !hasBack) {
+            result.success(false)
+            return
+        }
+
         for (instance in cameras.values) {
             if (instance.recording != null && !instance.isSwitching) {
                 result.success(true)
@@ -438,22 +489,37 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         }
 
         cameraInstance.isSwitching = true
-        
+
         val recording = cameraInstance.recording!!
         cameraInstance.recording = null
-        
+
         cameraInstance.recordingURL?.let { url ->
             cameraInstance.segmentFiles.add(File(url))
         }
         cameraInstance.recordingURL = null
-        
+
         val newLensDirection = if ((cameraInstance.cameraDescription?.get("lensDirection") as? String) == "front") "back" else "front"
-        
+        val actualCameraId = cameraId!!
+
+        var hasCompleted = false
         cameraInstance.switchingHandler = {
-            performCameraSwitch(cameraId!!, cameraInstance, newLensDirection, activity, result)
+            if (!hasCompleted) {
+                hasCompleted = true
+                cameraInstance.switchingHandler = null
+                performCameraSwitch(actualCameraId, cameraInstance, newLensDirection, activity, result)
+            }
         }
-        
+
         recording.stop()
+
+        GlobalScope.launch(Dispatchers.Main) {
+            delay(3000)
+            if (!hasCompleted) {
+                hasCompleted = true
+                cameraInstance.switchingHandler = null
+                performCameraSwitch(actualCameraId, cameraInstance, newLensDirection, activity, result)
+            }
+        }
     }
 
     private fun performCameraSwitch(
@@ -523,6 +589,11 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                     .start(ContextCompat.getMainExecutor(activity)) { event ->
                         when (event) {
                             is VideoRecordEvent.Finalize -> {
+                                cameraInstance.recordingURL?.let { url ->
+                                    if (url.isNotEmpty() && !cameraInstance.segmentFiles.any { it.absolutePath == url }) {
+                                        cameraInstance.segmentFiles.add(File(url))
+                                    }
+                                }
                                 cameraInstance.switchingHandler?.let { handler ->
                                     cameraInstance.switchingHandler = null
                                     handler()
@@ -533,6 +604,7 @@ class WaffleCameraPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                     }
 
                 cameraInstance.recording = recording
+                cameraInstance.recordingURL = segmentFile.absolutePath
                 cameraInstance.isSwitching = false
 
                 val currentTextureId = cameraInstance.textureEntry?.id()

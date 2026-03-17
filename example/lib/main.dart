@@ -330,6 +330,15 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
   Future<void> _switchCameraDuringRecording() async {
     if (_cameras.length < 2 || _cameraId == null || !_isRecording) return;
 
+    final canSwitch = await _platform.canSwitchCurrentCamera;
+    if (!canSwitch) {
+      setState(() {
+        _errorMessage =
+            'Camera switching not supported on this device while recording';
+      });
+      return;
+    }
+
     setState(() {
       _isSwitching = true;
     });
@@ -337,7 +346,6 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
     try {
       developer.log('Camera switch started for camera ID: $_cameraId');
 
-      // Switch camera — returns the new texture ID (may be same ID on Android)
       final newTextureId = await _platform.switchCamera(_cameraId!);
 
       setState(() {
