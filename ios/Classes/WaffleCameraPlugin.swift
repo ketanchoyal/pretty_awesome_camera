@@ -19,6 +19,9 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
         var previewTexture: CameraPreviewTexture?
         var textureId: Int64?
         var lensPosition: AVCaptureDevice.Position = .back
+        var requestedPresetName: String = "high"
+        var capturePreset: AVCaptureSession.Preset = .hd1280x720
+        var captureDimensions: CMVideoDimensions = CMVideoDimensions(width: 1280, height: 720)
         var recordingURL: URL?
         var assetWriter: AVAssetWriter?
         var videoWriterInput: AVAssetWriterInput?
@@ -93,6 +96,7 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
                 os_unfair_lock_unlock(&recordingLock)
             }
         }
+
     }
     
     public static func register(with registrar: FlutterPluginRegistrar) {
@@ -176,9 +180,11 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
         
         let lensDirection = cameraDescription["lensDirection"] as? String ?? "back"
         let position: AVCaptureDevice.Position = lensDirection == "front" ? .front : .back
+        let presetName = (args["preset"] as? String) ?? "high"
         
         let instance = CameraInstance(cameraId: cameraId)
         instance.lensPosition = position
+        instance.requestedPresetName = presetName
         
         os_unfair_lock_lock(&stateLock)
         cameras[cameraId] = instance
@@ -231,6 +237,11 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
             cameraInstance.audioDataOutput = audioDataOutput
             
             cameraInstance.captureSession = captureSession
+
+            let resolvedPreset = resolveCapturePreset(for: cameraInstance.requestedPresetName, session: captureSession)
+            captureSession.sessionPreset = resolvedPreset
+            cameraInstance.capturePreset = resolvedPreset
+            cameraInstance.captureDimensions = dimensions(for: resolvedPreset)
             
             if let textureRegistry = textureRegistry {
                 guard let texture = CameraPreviewTexture(
@@ -264,8 +275,10 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
                 streamHandlers[cameraId] = streamHandler
             }
             
-            DispatchQueue.global(qos: .userInitiated).async {
+            sessionQueue.sync {
+                cameraInstance.previewTexture?.updateForNewCamera(position: cameraInstance.lensPosition)
                 captureSession.startRunning()
+                cameraInstance.previewTexture?.updateForNewCamera(position: cameraInstance.lensPosition)
             }
             
             if let textureId = cameraInstance.textureId {
@@ -324,39 +337,37 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
         
         os_unfair_lock_lock(&stateLock)
         guard let cameraInstance = cameras[cameraId],
-              let captureSession = cameraInstance.captureSession else {
+              cameraInstance.captureSession != nil else {
             os_unfair_lock_unlock(&stateLock)
             result(FlutterError(code: "INVALID_CAMERA", message: "Camera not found or not initialized", details: nil))
             return
         }
         os_unfair_lock_unlock(&stateLock)
-        
+
         let tempDir = FileManager.default.temporaryDirectory
         let recordingURL = tempDir.appendingPathComponent("recording_\(Int(Date().timeIntervalSince1970)).mov")
         
         do {
             let assetWriter = try AVAssetWriter(url: recordingURL, fileType: .mov)
             
-            var videoWidth: Int = 1920
-            var videoHeight: Int = 1080
-            if let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: cameraInstance.lensPosition) {
-                let dimensions = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
-                videoWidth = Int(dimensions.width)
-                videoHeight = Int(dimensions.height)
-            }
+            let videoWidth = Int(cameraInstance.captureDimensions.width)
+            let videoHeight = Int(cameraInstance.captureDimensions.height)
             
+            let outputWidth = videoHeight
+            let outputHeight = videoWidth
+
             let videoSettings: [String: Any] = [
                 AVVideoCodecKey: AVVideoCodecType.h264,
-                AVVideoWidthKey: videoWidth,
-                AVVideoHeightKey: videoHeight
+                AVVideoWidthKey: outputWidth,
+                AVVideoHeightKey: outputHeight
             ]
             let videoWriterInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
             videoWriterInput.expectsMediaDataInRealTime = true
             
             let sourcePixelBufferAttributes: [String: Any] = [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
-                kCVPixelBufferWidthKey as String: videoWidth,
-                kCVPixelBufferHeightKey as String: videoHeight
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: outputWidth,
+                kCVPixelBufferHeightKey as String: outputHeight
             ]
             let pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(
                 assetWriterInput: videoWriterInput,
@@ -417,7 +428,12 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
         }
         os_unfair_lock_unlock(&stateLock)
         
-        if cameraInstance.isRecording && !cameraInstance.isPaused {
+        guard cameraInstance.isRecording else {
+            result(FlutterError(code: "NOT_RECORDING", message: "No active recording", details: nil))
+            return
+        }
+
+        if !cameraInstance.isPaused {
             cameraInstance.isPaused = true
         }
         
@@ -439,7 +455,18 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
         }
         os_unfair_lock_unlock(&stateLock)
         
-        if cameraInstance.isRecording && cameraInstance.isPaused {
+        guard cameraInstance.isRecording else {
+            result(FlutterError(code: "NOT_RECORDING", message: "No active recording", details: nil))
+            return
+        }
+
+        if cameraInstance.isPaused {
+            if !cameraInstance.isFirstVideoFrame {
+                cameraInstance.videoIsDisconnected = true
+            }
+            if !cameraInstance.isFirstAudioFrame {
+                cameraInstance.audioIsDisconnected = true
+            }
             cameraInstance.isPaused = false
         }
         
@@ -494,11 +521,6 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
         
         let newPosition: AVCaptureDevice.Position = cameraInstance.lensPosition == .back ? .front : .back
         
-        if cameraInstance.isRecording {
-            cameraInstance.videoIsDisconnected = true
-            cameraInstance.audioIsDisconnected = true
-        }
-        
         do {
             guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition) else {
                 result(FlutterError(code: "NO_CAMERA", message: "Camera device not available", details: nil))
@@ -506,22 +528,65 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
             }
             
             let videoInput = try AVCaptureDeviceInput(device: device)
+            var switchError: FlutterError?
             
-            sessionQueue.async {
+            sessionQueue.sync {
+                cameraInstance.previewTexture?.prepareForCameraSwitch(position: newPosition)
                 captureSession.beginConfiguration()
-                
-                for input in captureSession.inputs.compactMap({ $0 as? AVCaptureDeviceInput }) where input.device.hasMediaType(.video) {
+
+                let existingVideoInputs = captureSession.inputs.compactMap { $0 as? AVCaptureDeviceInput }.filter { $0.device.hasMediaType(.video) }
+
+                for input in existingVideoInputs {
                     captureSession.removeInput(input)
                 }
                 
-                if captureSession.canAddInput(videoInput) {
-                    captureSession.addInput(videoInput)
+                guard captureSession.canAddInput(videoInput) else {
+                    for input in existingVideoInputs where captureSession.canAddInput(input) {
+                        captureSession.addInput(input)
+                    }
+                    captureSession.commitConfiguration()
+                    switchError = FlutterError(code: "SWITCH_ERROR", message: "Unable to add new camera input", details: nil)
+                    return
+                }
+                captureSession.addInput(videoInput)
+
+                let targetPreset: AVCaptureSession.Preset
+                if cameraInstance.isRecording {
+                    targetPreset = cameraInstance.capturePreset
+                } else {
+                    targetPreset = resolveCapturePreset(for: cameraInstance.requestedPresetName, session: captureSession)
+                }
+
+                guard captureSession.canSetSessionPreset(targetPreset) else {
+                    captureSession.removeInput(videoInput)
+                    for input in existingVideoInputs where captureSession.canAddInput(input) {
+                        captureSession.addInput(input)
+                    }
+                    captureSession.commitConfiguration()
+                    switchError = FlutterError(code: "SWITCH_UNSUPPORTED", message: "New camera does not support the active recording configuration", details: nil)
+                    return
+                }
+
+                captureSession.sessionPreset = targetPreset
+
+                if !cameraInstance.isRecording {
+                    cameraInstance.capturePreset = targetPreset
+                    cameraInstance.captureDimensions = dimensions(for: targetPreset)
                 }
                 
                 captureSession.commitConfiguration()
+                cameraInstance.previewTexture?.updateForNewCamera(position: newPosition)
             }
-            
-            cameraInstance.previewTexture?.updateForNewCamera(position: newPosition)
+
+            if let switchError {
+                result(switchError)
+                return
+            }
+
+            DispatchQueue.main.async {
+                cameraInstance.previewTexture?.updateForNewCamera(position: newPosition)
+            }
+
             cameraInstance.lensPosition = newPosition
             
             if let textureId = cameraInstance.textureId {
@@ -620,6 +685,48 @@ public class WaffleCameraPlugin: NSObject, FlutterPlugin {
             adaptor.append(pixelBuffer, withPresentationTime: adjustedTime)
         }
     }
+
+    private func resolveCapturePreset(for presetName: String, session: AVCaptureSession) -> AVCaptureSession.Preset {
+        let candidates: [AVCaptureSession.Preset]
+
+        switch presetName {
+        case "low":
+            candidates = [.cif352x288, .vga640x480]
+        case "medium":
+            candidates = [.vga640x480, .cif352x288]
+        case "veryHigh":
+            candidates = [.hd1920x1080, .hd1280x720, .vga640x480, .cif352x288]
+        case "max":
+            candidates = [.hd4K3840x2160, .hd1920x1080, .hd1280x720, .vga640x480, .cif352x288]
+        case "high":
+            fallthrough
+        default:
+            candidates = [.hd1280x720, .vga640x480, .cif352x288]
+        }
+
+        for preset in candidates where session.canSetSessionPreset(preset) {
+            return preset
+        }
+
+        return .high
+    }
+
+    private func dimensions(for preset: AVCaptureSession.Preset) -> CMVideoDimensions {
+        switch preset {
+        case .cif352x288:
+            return CMVideoDimensions(width: 352, height: 288)
+        case .vga640x480:
+            return CMVideoDimensions(width: 640, height: 480)
+        case .hd1920x1080:
+            return CMVideoDimensions(width: 1920, height: 1080)
+        case .hd4K3840x2160:
+            return CMVideoDimensions(width: 3840, height: 2160)
+        case .hd1280x720:
+            fallthrough
+        default:
+            return CMVideoDimensions(width: 1280, height: 720)
+        }
+    }
 }
 
 extension WaffleCameraPlugin: AVCaptureAudioDataOutputSampleBufferDelegate {
@@ -685,6 +792,7 @@ extension WaffleCameraPlugin: AVCaptureAudioDataOutputSampleBufferDelegate {
 }
 
 class CameraPreviewTexture: NSObject, FlutterTexture, AVCaptureVideoDataOutputSampleBufferDelegate {
+    private static let switchStabilizationFrameCount = 3
     var latestPixelBuffer: CVPixelBuffer?
     var textureId: Int64 = 0
     let captureSession: AVCaptureSession
@@ -693,6 +801,8 @@ class CameraPreviewTexture: NSObject, FlutterTexture, AVCaptureVideoDataOutputSa
     weak var textureRegistry: FlutterTextureRegistry?
     var lensPosition: AVCaptureDevice.Position = .back
     var onSampleBuffer: ((CMSampleBuffer) -> Void)?
+    private var stateLock = os_unfair_lock()
+    private var framesToDropAfterSwitch = 0
     
     init?(session: AVCaptureSession, textureRegistry: FlutterTextureRegistry, lensPosition: AVCaptureDevice.Position) {
         self.captureSession = session
@@ -704,27 +814,35 @@ class CameraPreviewTexture: NSObject, FlutterTexture, AVCaptureVideoDataOutputSa
         super.init()
         
         videoDataOutput.setSampleBufferDelegate(self, queue: videoDataOutputQueue)
+        videoDataOutput.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
+        ]
         videoDataOutput.alwaysDiscardsLateVideoFrames = true
         
         if session.canAddOutput(videoDataOutput) {
             session.addOutput(videoDataOutput)
-            
-            if let connection = videoDataOutput.connection(with: .video) {
-                if connection.isVideoOrientationSupported {
-                    connection.videoOrientation = .portrait
-                }
-                if connection.isVideoMirroringSupported && lensPosition == .front {
-                    connection.isVideoMirrored = true
-                }
-            }
         } else {
             return nil
         }
     }
     
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        var shouldDropFrame = false
+        os_unfair_lock_lock(&stateLock)
+        if framesToDropAfterSwitch > 0 {
+            framesToDropAfterSwitch -= 1
+            shouldDropFrame = true
+        }
+        os_unfair_lock_unlock(&stateLock)
+
+        if shouldDropFrame {
+            return
+        }
+
         if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            os_unfair_lock_lock(&stateLock)
             latestPixelBuffer = pixelBuffer
+            os_unfair_lock_unlock(&stateLock)
             textureRegistry?.textureFrameAvailable(textureId)
         }
         
@@ -732,10 +850,24 @@ class CameraPreviewTexture: NSObject, FlutterTexture, AVCaptureVideoDataOutputSa
     }
     
     func copyPixelBuffer() -> Unmanaged<CVPixelBuffer>? {
+        os_unfair_lock_lock(&stateLock)
         guard let pixelBuffer = latestPixelBuffer else {
+            os_unfair_lock_unlock(&stateLock)
             return nil
         }
+        os_unfair_lock_unlock(&stateLock)
         return Unmanaged.passRetained(pixelBuffer)
+    }
+
+    func prepareForCameraSwitch(position: AVCaptureDevice.Position) {
+        os_unfair_lock_lock(&stateLock)
+        latestPixelBuffer = nil
+        // Drop a few frames so the preview and writer don't receive a
+        // half-switched image while AVCapture settles on the new input.
+        framesToDropAfterSwitch = Self.switchStabilizationFrameCount
+        os_unfair_lock_unlock(&stateLock)
+        textureRegistry?.textureFrameAvailable(textureId)
+        updateForNewCamera(position: position)
     }
     
     func updateForNewCamera(position: AVCaptureDevice.Position) {

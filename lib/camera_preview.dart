@@ -9,25 +9,35 @@ import 'package:flutter/material.dart';
 /// ```dart
 /// CameraPreview(
 ///   cameraId: textureId,
-///   aspectRatio: 16 / 9,
 /// )
 /// ```
 class CameraPreview extends StatelessWidget {
   /// The texture ID for the camera preview.
   final int cameraId;
 
-  /// The aspect ratio of the camera preview.
-  /// Defaults to 16:9 if not specified.
-  final double? aspectRatio;
+  /// Portrait preview aspect ratio used by the native camera feed.
+  static const double _previewAspectRatio = 9 / 16;
 
-  const CameraPreview({Key? key, required this.cameraId, this.aspectRatio})
-    : super(key: key);
+  const CameraPreview({super.key, required this.cameraId});
 
   @override
   Widget build(BuildContext context) {
-    return AspectRatio(
-      aspectRatio: aspectRatio ?? 16 / 9,
-      child: Texture(textureId: cameraId),
+    return ColoredBox(
+      color: Colors.black,
+      child: FittedBox(
+        fit: BoxFit.cover,
+        child: SizedBox(
+          width: 9,
+          height: 16,
+          child: AspectRatio(
+            aspectRatio: _previewAspectRatio,
+            child: Texture(
+              textureId: cameraId,
+              filterQuality: FilterQuality.high,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -39,21 +49,13 @@ class CameraPreview extends StatelessWidget {
 /// ```dart
 /// CameraPreviewWithState(
 ///   cameraIdFuture: initializeCamera(),
-///   aspectRatio: 16 / 9,
 /// )
 /// ```
 class CameraPreviewWithState extends StatefulWidget {
   /// A future that resolves to the camera texture ID.
   final Future<int> cameraIdFuture;
 
-  /// The aspect ratio of the camera preview.
-  final double? aspectRatio;
-
-  const CameraPreviewWithState({
-    Key? key,
-    required this.cameraIdFuture,
-    this.aspectRatio,
-  }) : super(key: key);
+  const CameraPreviewWithState({super.key, required this.cameraIdFuture});
 
   @override
   State<CameraPreviewWithState> createState() => _CameraPreviewWithStateState();
@@ -66,42 +68,33 @@ class _CameraPreviewWithStateState extends State<CameraPreviewWithState> {
       future: widget.cameraIdFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return AspectRatio(
-            aspectRatio: widget.aspectRatio ?? 16 / 9,
-            child: Container(
-              color: Colors.black,
-              child: const Center(child: CircularProgressIndicator()),
-            ),
+          return Container(
+            color: Colors.black,
+            child: const Center(child: CircularProgressIndicator()),
           );
         }
 
         if (snapshot.hasError || !snapshot.hasData) {
-          return AspectRatio(
-            aspectRatio: widget.aspectRatio ?? 16 / 9,
-            child: Container(
-              color: Colors.black,
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.error, color: Colors.red, size: 48),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Camera error: ${snapshot.error ?? "Unknown error"}',
-                      style: const TextStyle(color: Colors.white),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
+          return Container(
+            color: Colors.black,
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.error, color: Colors.red, size: 48),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Camera error: ${snapshot.error ?? "Unknown error"}',
+                    style: const TextStyle(color: Colors.white),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
               ),
             ),
           );
         }
 
-        return CameraPreview(
-          cameraId: snapshot.data!,
-          aspectRatio: widget.aspectRatio,
-        );
+        return CameraPreview(cameraId: snapshot.data!);
       },
     );
   }

@@ -1,16 +1,29 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
-import 'dart:io';
 import 'dart:developer' as developer;
+import 'dart:io';
 
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:waffle_camera_plugin/waffle_camera_plugin.dart';
-import 'package:waffle_camera_plugin/waffle_camera_plugin_platform_interface.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:gal/gal.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:device_info_plus/device_info_plus.dart';
+import 'package:waffle_camera_plugin/waffle_camera_plugin.dart';
+import 'package:waffle_camera_plugin/waffle_camera_plugin_platform_interface.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      systemNavigationBarColor: Colors.black,
+    ),
+  );
   runApp(const MyApp());
 }
 
@@ -20,31 +33,44 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Waffle Camera Plugin Demo',
+      title: 'Waffle Camera',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.red,
+          brightness: Brightness.dark,
+        ),
         useMaterial3: true,
+        scaffoldBackgroundColor: Colors.black,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          systemOverlayStyle: SystemUiOverlayStyle.light,
+        ),
       ),
-      home: const CameraDemoScreen(),
+      home: const CameraScreen(),
     );
   }
 }
 
-class CameraDemoScreen extends StatefulWidget {
-  const CameraDemoScreen({super.key});
+class CameraScreen extends StatefulWidget {
+  const CameraScreen({super.key});
 
   @override
-  State<CameraDemoScreen> createState() => _CameraDemoScreenState();
+  State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraDemoScreenState extends State<CameraDemoScreen> {
+class _CameraScreenState extends State<CameraScreen>
+    with TickerProviderStateMixin {
   final _platform = WaffleCameraPluginPlatform.instance;
 
+  // Camera state
   List<CameraDescription> _cameras = [];
   int? _selectedCameraIndex;
   int? _cameraId;
   int? _textureId;
 
+  // Recording state
   bool _isInitializing = false;
   bool _isRecording = false;
   bool _isPaused = false;
@@ -52,22 +78,94 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
   String? _errorMessage;
   String? _recordedFilePath;
 
+  // Timer
+  Timer? _recordingTimer;
+  int _recordingSeconds = 0;
+
+  // Animation controllers
+  late AnimationController _recordButtonController;
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+  late AnimationController _blinkController;
+
   RecordingState _recordingState = RecordingState.idle;
   StreamSubscription<RecordingState>? _recordingStateSubscription;
 
   @override
   void initState() {
     super.initState();
+    _initAnimations();
     _loadCameras();
+  }
+
+  void _initAnimations() {
+    _recordButtonController = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    );
+
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.15).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    _blinkController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+
+    _pulseController.repeat(reverse: true);
+    _blinkController.repeat(reverse: true);
   }
 
   @override
   void dispose() {
+    _recordingTimer?.cancel();
     _recordingStateSubscription?.cancel();
     _disposeCamera();
+    _recordButtonController.dispose();
+    _pulseController.dispose();
+    _blinkController.dispose();
     super.dispose();
   }
 
+  // Timer methods
+  void _startTimer() {
+    _recordingTimer?.cancel();
+    _recordingSeconds = 0;
+    _recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!_isPaused) {
+        setState(() {
+          _recordingSeconds++;
+        });
+      }
+    });
+  }
+
+  void _stopTimer() {
+    _recordingTimer?.cancel();
+    _recordingTimer = null;
+  }
+
+  void _pauseTimer() {
+    // Timer keeps running but we don't increment in callback
+  }
+
+  void _resumeTimer() {
+    // Timer continues, increment resumes in callback
+  }
+
+  String get _formattedTime {
+    final minutes = (_recordingSeconds ~/ 60).toString().padLeft(2, '0');
+    final seconds = (_recordingSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  // Camera operations
   Future<void> _loadCameras() async {
     try {
       final cameras = await _platform.getAvailableCameras();
@@ -75,12 +173,12 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
         _cameras = cameras;
         if (cameras.isNotEmpty) {
           _selectedCameraIndex = 0;
+          // Auto-initialize first camera
+          _initializeCamera();
         }
       });
     } on PlatformException catch (e) {
-      setState(() {
-        _errorMessage = 'Failed to get cameras: ${e.message}';
-      });
+      _showError('Failed to get cameras: ${e.message}');
     }
   }
 
@@ -93,22 +191,18 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
     });
 
     try {
-      // Dispose existing camera first
       await _disposeCamera();
 
       final camera = _cameras[_selectedCameraIndex!];
 
-      // Create camera
       final cameraId = await _platform.createCamera(
         camera,
         ResolutionPreset.high,
       );
       _cameraId = cameraId;
 
-      // Initialize camera — returns the texture ID
       final textureId = await _platform.initializeCamera(cameraId);
 
-      // Subscribe to recording state changes
       _recordingStateSubscription = _platform
           .onRecordingStateChanged(cameraId)
           .listen((state) {
@@ -148,6 +242,9 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
         _isPaused = false;
         _recordingState = RecordingState.idle;
       });
+
+      _stopTimer();
+      _recordingSeconds = 0;
     }
   }
 
@@ -161,10 +258,10 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
         _isPaused = false;
         _recordedFilePath = null;
       });
+      _startTimer();
+      _recordButtonController.forward();
     } on PlatformException catch (e) {
-      setState(() {
-        _errorMessage = 'Failed to start recording: ${e.message}';
-      });
+      _showError('Failed to start recording: ${e.message}');
     }
   }
 
@@ -177,9 +274,7 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
         _isPaused = true;
       });
     } on PlatformException catch (e) {
-      setState(() {
-        _errorMessage = 'Failed to pause recording: ${e.message}';
-      });
+      _showError('Failed to pause recording: ${e.message}');
     }
   }
 
@@ -192,9 +287,7 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
         _isPaused = false;
       });
     } on PlatformException catch (e) {
-      setState(() {
-        _errorMessage = 'Failed to resume recording: ${e.message}';
-      });
+      _showError('Failed to resume recording: ${e.message}');
     }
   }
 
@@ -208,9 +301,49 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
         _isPaused = false;
         _recordedFilePath = filePath;
       });
+      _stopTimer();
+      _recordButtonController.reverse();
     } on PlatformException catch (e) {
+      _showError('Failed to stop recording: ${e.message}');
+    }
+  }
+
+  Future<void> _switchCamera() async {
+    if (_cameras.length < 2 || _cameraId == null) return;
+
+    if (_isRecording) {
+      await _switchCameraDuringRecording();
+    } else {
       setState(() {
-        _errorMessage = 'Failed to stop recording: ${e.message}';
+        _selectedCameraIndex = (_selectedCameraIndex! + 1) % _cameras.length;
+      });
+      await _initializeCamera();
+    }
+  }
+
+  Future<void> _switchCameraDuringRecording() async {
+    final canSwitch = await _platform.canSwitchCurrentCamera;
+    if (!canSwitch) {
+      _showError('Camera switching not supported while recording');
+      return;
+    }
+
+    setState(() {
+      _isSwitching = true;
+    });
+
+    try {
+      final newTextureId = await _platform.switchCamera(_cameraId!);
+
+      setState(() {
+        _textureId = newTextureId;
+        _selectedCameraIndex = (_selectedCameraIndex! + 1) % _cameras.length;
+      });
+    } on PlatformException catch (e) {
+      _showError('Failed to switch camera: ${e.message}');
+    } finally {
+      setState(() {
+        _isSwitching = false;
       });
     }
   }
@@ -236,11 +369,6 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
             if (status.isDenied) {
               status = await Permission.photos.request();
             }
-          } else if (sdkInt >= 29) {
-            status = await Permission.storage.status;
-            if (status.isDenied) {
-              status = await Permission.storage.request();
-            }
           } else {
             status = await Permission.storage.status;
             if (status.isDenied) {
@@ -259,365 +387,505 @@ class _CameraDemoScreenState extends State<CameraDemoScreen> {
         try {
           await Gal.putVideo(_recordedFilePath!);
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Video saved to gallery')),
-            );
+            _showSuccess('Video saved to gallery');
           }
         } catch (e) {
-          setState(() {
-            _errorMessage = 'Failed to save video to gallery: $e';
-          });
+          _showError('Failed to save video: $e');
         }
       } else if (status.isDenied) {
-        setState(() {
-          _errorMessage =
-              'Permission denied. Please allow access to save videos.';
-        });
+        _showError('Permission denied. Allow access to save videos.');
       } else if (status.isPermanentlyDenied) {
-        setState(() {
-          _errorMessage =
-              'Permission permanently denied. Please enable in Settings > Privacy & Security > Photos';
-        });
+        _showError('Enable in Settings > Privacy > Photos');
       }
     } catch (e) {
-      setState(() {
-        _errorMessage = 'Error saving to gallery: $e';
-      });
+      _showError('Error saving: $e');
     }
   }
 
-  void _switchCamera() {
-    if (_cameras.length < 2) return;
-
+  void _showError(String message) {
     setState(() {
-      _selectedCameraIndex = (_selectedCameraIndex! + 1) % _cameras.length;
+      _errorMessage = message;
     });
 
-    _initializeCamera();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red.shade800,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'DISMISS',
+          textColor: Colors.white,
+          onPressed: () {
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          },
+        ),
+      ),
+    );
+
+    // Clear error after showing
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted) {
+        setState(() {
+          _errorMessage = null;
+        });
+      }
+    });
   }
 
-  Future<void> _switchCameraAndContinueRecording() async {
-    if (_cameras.length < 2 || _cameraId == null) return;
-
-    // Stop current recording
-    String? firstPartPath;
-    if (_isRecording) {
-      firstPartPath = await _platform.stopRecording(_cameraId!);
-    }
-
-    // Dispose current camera
-    await _disposeCamera();
-
-    // Switch to next camera
-    setState(() {
-      _selectedCameraIndex = (_selectedCameraIndex! + 1) % _cameras.length;
-    });
-
-    // Initialize new camera
-    await _initializeCamera();
-
-    // Start new recording
-    if (_cameraId != null) {
-      await _platform.startRecording(_cameraId!);
-      setState(() {
-        _isRecording = true;
-        _isPaused = false;
-        _recordedFilePath = firstPartPath;
-      });
-    }
-  }
-
-  Future<void> _switchCameraDuringRecording() async {
-    if (_cameras.length < 2 || _cameraId == null || !_isRecording) return;
-
-    final canSwitch = await _platform.canSwitchCurrentCamera;
-    if (!canSwitch) {
-      setState(() {
-        _errorMessage =
-            'Camera switching not supported on this device while recording';
-      });
-      return;
-    }
-
-    setState(() {
-      _isSwitching = true;
-    });
-
-    try {
-      developer.log('Camera switch started for camera ID: $_cameraId');
-
-      final newTextureId = await _platform.switchCamera(_cameraId!);
-
-      setState(() {
-        _textureId = newTextureId;
-        _selectedCameraIndex = (_selectedCameraIndex! + 1) % _cameras.length;
-      });
-
-      developer.log('Camera switch completed, new texture ID: $newTextureId');
-    } on PlatformException catch (e) {
-      developer.log('Camera switch failed: ${e.message}', error: e);
-
-      setState(() {
-        _errorMessage = 'Failed to switch camera: ${e.message}';
-      });
-    } finally {
-      setState(() {
-        _isSwitching = false;
-      });
-    }
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white),
+            const SizedBox(width: 12),
+            Text(message),
+          ],
+        ),
+        backgroundColor: Colors.green.shade700,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.black,
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: const Text('Waffle Camera Plugin Demo'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        automaticallyImplyLeading: false,
+        title: _isRecording ? _buildRecordingIndicator() : null,
+        centerTitle: true,
         actions: [
-          if (_cameras.length > 1)
+          if (!_isRecording && _cameras.length > 1)
             IconButton(
-              icon: const Icon(Icons.switch_camera),
-              onPressed: _cameraId == null ? null : _switchCamera,
-              tooltip: 'Switch Camera',
+              onPressed: _isInitializing ? null : _switchCamera,
+              icon: const Icon(CupertinoIcons.switch_camera),
+              color: Colors.white,
             ),
         ],
       ),
-      body: Column(
+      body: Stack(
+        fit: StackFit.expand,
         children: [
-          // Error message
-          if (_errorMessage != null)
-            Container(
-              width: double.infinity,
-              color: Colors.red.shade100,
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                _errorMessage!,
-                style: TextStyle(color: Colors.red.shade900),
-              ),
-            ),
-
           // Camera preview
-          Expanded(child: _buildCameraPreview()),
+          _buildCameraPreview(),
 
-          // Camera info
-          if (_selectedCameraIndex != null && _cameras.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Text(
-                'Camera: ${_cameras[_selectedCameraIndex!].name}',
-                style: Theme.of(context).textTheme.bodySmall,
+          // Loading overlay when switching
+          if (_isSwitching)
+            Container(
+              color: Colors.black54,
+              child: const Center(
+                child: CircularProgressIndicator(color: Colors.white),
               ),
             ),
 
-          // Recording state
-          if (_isRecording)
+          // Pause overlay
+          if (_isPaused)
             Container(
-              padding: const EdgeInsets.symmetric(vertical: 8),
+              color: Colors.black54,
+              child: const Center(
+                child: Icon(Icons.pause, size: 80, color: Colors.white70),
+              ),
+            ),
+
+          // Top controls
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 16,
+            left: 16,
+            right: 16,
+            child: SafeArea(
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Icon(
-                    _isPaused ? Icons.pause_circle : Icons.fiber_manual_record,
-                    color: _isPaused ? Colors.orange : Colors.red,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    _isPaused ? 'PAUSED' : 'RECORDING',
-                    style: TextStyle(
-                      color: _isPaused ? Colors.orange : Colors.red,
-                      fontWeight: FontWeight.bold,
+                  // Flash button (placeholder)
+                  _buildFlashButton(),
+
+                  // Camera switch during recording
+                  if (_isRecording && _cameras.length > 1)
+                    GestureDetector(
+                      onTap: _isSwitching ? null : _switchCamera,
+                      child: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.black38,
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                        child: _isSwitching
+                            ? const SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(
+                                CupertinoIcons.switch_camera,
+                                color: Colors.white,
+                                size: 24,
+                              ),
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),
+          ),
 
-          // Recorded file info
-          if (_recordedFilePath != null)
-            Container(
-              width: double.infinity,
-              color: Colors.green.shade100,
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Video saved to:',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _recordedFilePath!,
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  const SizedBox(height: 12),
-                  ElevatedButton.icon(
-                    onPressed: _saveToGallery,
-                    icon: const Icon(Icons.save_alt),
-                    label: const Text('Save to Gallery'),
-                  ),
-                ],
+          // Bottom controls
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).padding.bottom + 30,
+                top: 20,
+              ),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withOpacity(0.5),
+                    Colors.black.withOpacity(0.8),
+                  ],
+                ),
+              ),
+              child: SafeArea(
+                top: false,
+                child: _recordedFilePath != null && !_isRecording
+                    ? _buildPlaybackControls()
+                    : _buildRecordingControls(),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
 
-          // Control buttons
-          _buildControlButtons(),
+  Widget _buildFlashButton() {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black38,
+        borderRadius: BorderRadius.circular(30),
+      ),
+      child: const Icon(
+        CupertinoIcons.bolt_slash_fill,
+        color: Colors.white70,
+        size: 22,
+      ),
+    );
+  }
 
-          const SizedBox(height: 16),
+  Widget _buildRecordingIndicator() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black38,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FadeTransition(
+            opacity: _blinkController,
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: const BoxDecoration(
+                color: Colors.red,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          const Text(
+            'REC',
+            style: TextStyle(
+              color: Colors.red,
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _formattedTime,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w500,
+              fontSize: 14,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
         ],
       ),
     );
   }
 
   Widget _buildCameraPreview() {
-    if (_isInitializing) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Initializing camera...'),
-          ],
+    if (_isInitializing && _textureId == null) {
+      return Container(
+        color: Colors.black,
+        child: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(color: Colors.white),
+              SizedBox(height: 16),
+              Text(
+                'Initializing camera...',
+                style: TextStyle(color: Colors.white70),
+              ),
+            ],
+          ),
         ),
       );
     }
 
     if (_textureId != null) {
-      return CameraPreview(cameraId: _textureId!, aspectRatio: 16 / 9);
+      return CameraPreview(cameraId: _textureId!);
     }
 
     if (_cameras.isEmpty) {
-      return const Center(child: Text('No cameras available'));
+      return Container(
+        color: Colors.black,
+        child: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.videocam_off, size: 64, color: Colors.grey),
+              SizedBox(height: 16),
+              Text(
+                'No cameras available',
+                style: TextStyle(color: Colors.grey, fontSize: 16),
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.camera_alt, size: 64, color: Colors.grey),
-          const SizedBox(height: 16),
-          Text(
-            'Camera not initialized',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          ElevatedButton.icon(
-            onPressed: _initializeCamera,
-            icon: const Icon(Icons.camera),
-            label: const Text('Initialize Camera'),
-          ),
-        ],
+    return Container(
+      color: Colors.black,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.camera_alt_outlined, size: 64, color: Colors.grey),
+            const SizedBox(height: 16),
+            Text(
+              'Tap the button below to start',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(color: Colors.white70),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildControlButtons() {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        children: [
-          // Switch camera button during recording (shown only when recording)
-          if (_isRecording && _cameras.length > 1)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12.0),
-              child: _isSwitching
-                  ? Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+  Widget _buildRecordingControls() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        // Gallery/Last video placeholder
+        Container(
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            color: Colors.white10,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white24, width: 1),
+          ),
+          child: const Icon(
+            Icons.photo_library_outlined,
+            color: Colors.white70,
+            size: 28,
+          ),
+        ),
+
+        // Record button
+        GestureDetector(
+          onTap: _isRecording
+              ? _stopRecording
+              : (_isInitializing ? null : _startRecording),
+          onLongPress: _isRecording && !_isPaused ? _pauseRecording : null,
+          child: AnimatedBuilder(
+            animation: _recordButtonController,
+            builder: (context, child) {
+              return AnimatedBuilder(
+                animation: _pulseAnimation,
+                builder: (context, child) {
+                  return Transform.scale(
+                    scale: _isRecording && !_isPaused
+                        ? _pulseAnimation.value
+                        : 1.0,
+                    child: Container(
+                      width: 80,
+                      height: 80,
                       decoration: BoxDecoration(
-                        border: Border.all(color: Colors.blue, width: 2),
-                        borderRadius: BorderRadius.circular(4),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 4),
                       ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.blue,
-                              ),
+                      child: Center(
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          width: _isRecording ? 30 : 65,
+                          height: _isRecording ? 30 : 65,
+                          decoration: BoxDecoration(
+                            color: _isRecording
+                                ? Colors.red
+                                : Colors.red.shade600,
+                            borderRadius: BorderRadius.circular(
+                              _isRecording ? 8 : 40,
                             ),
                           ),
-                          SizedBox(width: 8),
-                          Text(
-                            'Switching camera...',
-                            style: TextStyle(
-                              color: Colors.blue,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
-                    )
-                  : ElevatedButton.icon(
-                      onPressed: _switchCameraDuringRecording,
-                      icon: const Icon(Icons.switch_camera),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        foregroundColor: Colors.white,
-                      ),
-                      label: const Text('Switch Camera'),
                     ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+
+        // Pause/Resume button
+        GestureDetector(
+          onTap: _isRecording
+              ? (_isPaused ? _resumeRecording : _pauseRecording)
+              : null,
+          child: Container(
+            width: 50,
+            height: 50,
+            decoration: BoxDecoration(
+              color: _isRecording ? Colors.white24 : Colors.white10,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              _isPaused ? Icons.play_arrow : Icons.pause,
+              color: _isRecording ? Colors.white : Colors.white38,
+              size: 28,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPlaybackControls() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Video info
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.green.shade900.withOpacity(0.8),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.videocam, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                'Video recorded ($_formattedTime)',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // Action buttons
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            // Retake button
+            _buildActionButton(
+              icon: Icons.refresh,
+              label: 'Retake',
+              color: Colors.grey.shade700,
+              onTap: () {
+                setState(() {
+                  _recordedFilePath = null;
+                  _recordingSeconds = 0;
+                });
+              },
             ),
 
-          // Main control buttons
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              // Initialize/Dispose button
-              if (_textureId == null)
-                ElevatedButton.icon(
-                  onPressed: _isInitializing ? null : _initializeCamera,
-                  icon: const Icon(Icons.camera),
-                  label: const Text('Start Camera'),
-                )
-              else
-                ElevatedButton.icon(
-                  onPressed: _isRecording ? null : _disposeCamera,
-                  icon: const Icon(Icons.close),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    foregroundColor: Colors.white,
-                  ),
-                  label: const Text('Stop Camera'),
+            // Save button
+            _buildActionButton(
+              icon: Icons.save_alt,
+              label: 'Save',
+              color: Colors.green.shade600,
+              onTap: _saveToGallery,
+            ),
+
+            // Share button
+            _buildActionButton(
+              icon: Icons.share,
+              label: 'Share',
+              color: Colors.blue.shade600,
+              onTap: () {
+                _showSuccess('Share functionality coming soon!');
+              },
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: color.withOpacity(0.4),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
                 ),
-
-              // Recording controls
-              if (_textureId != null) ...[
-                if (!_isRecording)
-                  ElevatedButton.icon(
-                    onPressed: _startRecording,
-                    icon: const Icon(Icons.fiber_manual_record),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                    ),
-                    label: const Text('Record'),
-                  )
-                else ...[
-                  // Pause/Resume button
-                  ElevatedButton.icon(
-                    onPressed: _isPaused ? _resumeRecording : _pauseRecording,
-                    icon: Icon(_isPaused ? Icons.play_arrow : Icons.pause),
-                    label: Text(_isPaused ? 'Resume' : 'Pause'),
-                  ),
-
-                  // Stop button
-                  ElevatedButton.icon(
-                    onPressed: _stopRecording,
-                    icon: const Icon(Icons.stop),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                    ),
-                    label: const Text('Stop'),
-                  ),
-                ],
               ],
-            ],
+            ),
+            child: Icon(icon, color: Colors.white, size: 28),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ],
       ),
