@@ -209,6 +209,20 @@ void main() {
     expect(controller.textureId, firstTextureId);
   });
 
+  test('switchCamera updates selected camera before prewarm', () async {
+    final controller = CameraController(
+      description: description,
+      availableCameras: platform.availableCameras,
+      platform: platform,
+    );
+
+    await controller.switchCamera();
+
+    expect(controller.value, isA<CameraUninitializedState>());
+    expect(controller.description.lensDirection, LensDirection.front);
+    expect(controller.textureId, isNull);
+  });
+
   test('recording lifecycle transitions are enforced', () async {
     final controller = CameraController(
       description: description,
@@ -254,7 +268,21 @@ void main() {
     expect(controller.description.lensDirection, LensDirection.front);
   });
 
-  test('switchToNextCamera reconfigures when not recording', () async {
+  test('switchCamera reconfigures when not recording', () async {
+    final controller = CameraController(
+      description: description,
+      availableCameras: platform.availableCameras,
+      platform: platform,
+    );
+
+    await controller.prewarmUp();
+    await controller.switchCamera();
+
+    expect(controller.value, isA<CameraReadyState>());
+    expect(controller.description.lensDirection, LensDirection.front);
+  });
+
+  test('switchToNextCamera remains an alias for switchCamera', () async {
     final controller = CameraController(
       description: description,
       availableCameras: platform.availableCameras,
